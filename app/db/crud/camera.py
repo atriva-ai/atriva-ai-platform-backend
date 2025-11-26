@@ -1,11 +1,18 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 from typing import List, Optional
 from app.db.models.camera import Camera
 from app.db.schemas.camera import CameraCreate, CameraUpdate
+from app.db.utils import should_defer_vehicle_tracking
 
 def create_camera(db: Session, camera: CameraCreate) -> Camera:
     # Exclude zone_ids from the model dump since it's not a field in the Camera model
     camera_data = camera.model_dump(exclude={'zone_ids'})
+    
+    # Exclude vehicle tracking fields if columns don't exist in this deployment
+    if should_defer_vehicle_tracking():
+        camera_data.pop('vehicle_tracking_enabled', None)
+        camera_data.pop('vehicle_tracking_config', None)
+    
     print(f"🔍 CRUD DEBUG: camera_data before creating: {camera_data}")
     db_camera = Camera(**camera_data)
     print(f"🔍 CRUD DEBUG: db_camera before commit: {db_camera}")
@@ -16,8 +23,9 @@ def create_camera(db: Session, camera: CameraCreate) -> Camera:
     
     print(f"🔍 CRUD DEBUG: db_camera after commit: {db_camera}")
     print(f"🔍 CRUD DEBUG: db_camera.is_active after commit: {db_camera.is_active}")
-    print(f"🔍 CRUD DEBUG: db_camera.vehicle_tracking_enabled after commit: {db_camera.vehicle_tracking_enabled}")
-    print(f"🔍 CRUD DEBUG: db_camera.vehicle_tracking_enabled type after commit: {type(db_camera.vehicle_tracking_enabled)}")
+    if not should_defer_vehicle_tracking():
+        print(f"🔍 CRUD DEBUG: db_camera.vehicle_tracking_enabled after commit: {db_camera.vehicle_tracking_enabled}")
+        print(f"🔍 CRUD DEBUG: db_camera.vehicle_tracking_enabled type after commit: {type(db_camera.vehicle_tracking_enabled)}")
     
     return db_camera
 
@@ -28,13 +36,29 @@ def get_cameras(
     is_active: Optional[bool] = None
 ) -> List[Camera]:
     query = db.query(Camera)
+    
+    # Defer vehicle tracking columns if they don't exist in this deployment
+    if should_defer_vehicle_tracking():
+        query = query.options(
+            defer(Camera.vehicle_tracking_enabled),
+            defer(Camera.vehicle_tracking_config)
+        )
+    
     if is_active is not None:
         query = query.filter(Camera.is_active == is_active)
     return query.offset(skip).limit(limit).all()
 
 def get_camera(db: Session, camera_id: int) -> Optional[Camera]:
-    camera = db.query(Camera).filter(Camera.id == camera_id).first()
-    return camera
+    query = db.query(Camera).filter(Camera.id == camera_id)
+    
+    # Defer vehicle tracking columns if they don't exist in this deployment
+    if should_defer_vehicle_tracking():
+        query = query.options(
+            defer(Camera.vehicle_tracking_enabled),
+            defer(Camera.vehicle_tracking_config)
+        )
+    
+    return query.first()
 
 def update_camera(
     db: Session, 
@@ -49,9 +73,15 @@ def update_camera(
         return None
 
     update_data = camera_update.model_dump(exclude_unset=True, exclude={'zone_ids'})
+    
+    # Exclude vehicle tracking fields if columns don't exist in this deployment
+    if should_defer_vehicle_tracking():
+        update_data.pop('vehicle_tracking_enabled', None)
+        update_data.pop('vehicle_tracking_config', None)
+    
     print(f"🔍 CRUD UPDATE: Update data for camera {camera_id}: {update_data}")
     
-    if 'vehicle_tracking_enabled' in update_data:
+    if 'vehicle_tracking_enabled' in update_data and not should_defer_vehicle_tracking():
         print(f"🔍 CRUD UPDATE: vehicle_tracking_enabled in update_data: {update_data['vehicle_tracking_enabled']}")
         print(f"🔍 CRUD UPDATE: vehicle_tracking_enabled type: {type(update_data['vehicle_tracking_enabled'])}")
     
@@ -61,8 +91,9 @@ def update_camera(
     db.commit()
     db.refresh(db_camera)
     
-    print(f"🔍 CRUD UPDATE: Camera {camera_id} vehicle_tracking_enabled after commit: {db_camera.vehicle_tracking_enabled}")
-    print(f"🔍 CRUD UPDATE: Camera {camera_id} vehicle_tracking_enabled type after commit: {type(db_camera.vehicle_tracking_enabled)}")
+    if not should_defer_vehicle_tracking():
+        print(f"🔍 CRUD UPDATE: Camera {camera_id} vehicle_tracking_enabled after commit: {db_camera.vehicle_tracking_enabled}")
+        print(f"🔍 CRUD UPDATE: Camera {camera_id} vehicle_tracking_enabled type after commit: {type(db_camera.vehicle_tracking_enabled)}")
     
     return db_camera
 
@@ -77,7 +108,16 @@ def delete_camera(db: Session, camera_id: int) -> bool:
 
 # crud/camera.py
 def update_camera_analytics(db: Session, camera_id: int, analytics_config: dict):
-    db_camera = db.query(Camera).filter(Camera.id == camera_id).first()
+    query = db.query(Camera).filter(Camera.id == camera_id)
+    
+    # Defer vehicle tracking columns if they don't exist in this deployment
+    if should_defer_vehicle_tracking():
+        query = query.options(
+            defer(Camera.vehicle_tracking_enabled),
+            defer(Camera.vehicle_tracking_config)
+        )
+    
+    db_camera = query.first()
     if db_camera:
         db_camera.analytics_config = analytics_config
         db.commit()

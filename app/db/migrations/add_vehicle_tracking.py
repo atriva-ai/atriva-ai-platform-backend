@@ -6,7 +6,8 @@ from app.database import engine
 
 def upgrade():
     """Add vehicle tracking fields to cameras table"""
-    with engine.connect() as conn:
+
+    with engine.begin() as conn:
         # Add vehicle_tracking_enabled column
         conn.execute(text("""
             ALTER TABLE cameras 
@@ -19,12 +20,11 @@ def upgrade():
             ADD COLUMN IF NOT EXISTS vehicle_tracking_config JSONB
         """))
         
-        conn.commit()
         print("✅ Added vehicle tracking fields to cameras table")
 
 def downgrade():
     """Remove vehicle tracking fields from cameras table"""
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         # Remove vehicle_tracking_config column
         conn.execute(text("""
             ALTER TABLE cameras 
@@ -37,7 +37,6 @@ def downgrade():
             DROP COLUMN IF EXISTS vehicle_tracking_enabled
         """))
         
-        conn.commit()
         print("✅ Removed vehicle tracking fields from cameras table")
 
 if __name__ == "__main__":

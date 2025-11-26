@@ -21,6 +21,18 @@ if os.getenv("ENV", "production") != "production":
     Base.metadata.create_all(bind=engine)
     print("✅ Tables created successfully")
     
+    # Run migrations to add missing columns
+    try:
+        from app.db.migrations.add_vehicle_tracking import upgrade
+        upgrade()
+    except Exception as e:
+        # Check if error is because column already exists (which is fine)
+        error_str = str(e).lower()
+        if "already exists" in error_str or "duplicate column" in error_str:
+            print("✅ Vehicle tracking columns already exist, skipping migration")
+        else:
+            print(f"⚠️ Migration warning: {str(e)}")
+    
     # Seed the database with initial data
     from app.init_db import seed
     seed()
