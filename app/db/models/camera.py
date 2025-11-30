@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, Table, Foreig
 from datetime import datetime
 from app.database import Base
 from sqlalchemy.orm import relationship
+from app.db.utils import should_defer_vehicle_tracking
 
 # Association table for many-to-many relationship between Camera and Analytics
 camera_analytics = Table(
@@ -36,3 +37,12 @@ class Camera(Base):
 
     def __repr__(self):
         return f"<Camera(id={self.id}, name='{self.name}', rtsp_url='{self.rtsp_url}')>"
+    
+    def __getattr__(self, name):
+        """Handle missing vehicle tracking attributes when columns don't exist"""
+        if should_defer_vehicle_tracking():
+            if name == 'vehicle_tracking_enabled':
+                return False
+            elif name == 'vehicle_tracking_config':
+                return None
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
