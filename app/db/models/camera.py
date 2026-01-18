@@ -27,6 +27,8 @@ class Camera(Base):
     # Vehicle tracking configuration
     vehicle_tracking_enabled = Column(Boolean, default=False)
     vehicle_tracking_config = Column(JSON, nullable=True)
+    # Person detection (AI) configuration
+    person_detection_enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

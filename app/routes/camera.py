@@ -35,6 +35,35 @@ async def get_video_pipeline_client():
     async with httpx.AsyncClient() as client:
         yield client
 
+async def get_ai_inference_client():
+    """Get HTTP client for AI inference service"""
+    async with httpx.AsyncClient() as client:
+        yield client
+
+async def start_ai_inference_for_camera(camera_id: int, ai_client: httpx.AsyncClient):
+    """Start continuous AI inference (person detection) for a camera."""
+    try:
+        print(f"🤖 Starting AI inference for camera {camera_id}")
+        inference_response = await ai_client.post(
+            f"{AI_SERVICE_URL}/inference/continuous/start",
+            params={
+                "camera_id": str(camera_id),
+                "model_name": "yolov8n",
+                "accelerator": "cpu32",
+                "object_filter": "person"
+            },
+            timeout=30.0
+        )
+        if inference_response.status_code == 200:
+            print(f"✅ AI inference started for camera {camera_id}")
+            return True
+        else:
+            print(f"⚠️ Failed to start AI inference for camera {camera_id}: {inference_response.status_code}")
+            return False
+    except Exception as e:
+        print(f"⚠️ Error starting AI inference for camera {camera_id}: {str(e)}")
+        return False
+
 def get_camera_status(camera_id: int) -> Dict:
     """Get camera runtime status"""
     if camera_id not in camera_status:
@@ -208,6 +237,11 @@ async def create_camera(
             if decode_response.status_code == 200:
                 print(f"✅ Auto-started camera {db_camera.id}")
                 response["video_validation"]["auto_started"] = True
+                
+                # Start AI inference for person detection if enabled
+                if db_camera.person_detection_enabled:
+                    async with httpx.AsyncClient() as ai_client:
+                        await start_ai_inference_for_camera(db_camera.id, ai_client)
             else:
                 print(f"❌ Failed to auto-start camera {db_camera.id}: {decode_response.status_code}")
                 response["video_validation"]["errors"].append(f"Failed to auto-start camera: {decode_response.status_code}")
@@ -367,6 +401,24 @@ async def update_camera(
                         
                         if decode_response.status_code == 200:
                             print(f"✅ SUCCESS: Camera {camera_id} decode started successfully")
+                            
+                            # Wait a bit for frames to be decoded, then start AI inference if enabled
+                            import asyncio
+                            await asyncio.sleep(3)
+                            
+                            # Check if frames are available and person detection is enabled
+                            status_check = await client.get(
+                                f"{VIDEO_PIPELINE_URL}/api/v1/video-pipeline/decode/status/",
+                                params={"camera_id": str(camera_id)},
+                                timeout=10.0
+                            )
+                            if status_check.status_code == 200:
+                                status_data = status_check.json()
+                                if status_data.get("status") == "running" and status_data.get("frame_count", 0) > 0:
+                                    # Frames are available, start AI inference if enabled
+                                    if current_camera.person_detection_enabled:
+                                        async with httpx.AsyncClient() as ai_client:
+                                            await start_ai_inference_for_camera(camera_id, ai_client)
                         else:
                             print(f"❌ FAILED: Start decode for camera {camera_id}: {decode_response.status_code}")
                             print(f"❌ FAILED RESPONSE: {decode_response.text}")
@@ -450,6 +502,53 @@ async def update_camera(
                         print(f"❌ Failed to stop vehicle tracking for camera {camera_id}: {tracking_response.status_code}")
             except Exception as e:
                 print(f"❌ Error managing vehicle tracking for camera {camera_id}: {str(e)}")
+    
+    # Handle person detection enable/disable BEFORE updating the database
+    if 'person_detection_enabled' in update_data:
+        new_detection_status = update_data['person_detection_enabled']
+        old_detection_status = current_camera.person_detection_enabled
+        
+        print(f"🔍 Person detection update check for camera {camera_id}:")
+        print(f"   - Old status: {old_detection_status}")
+        print(f"   - New status: {new_detection_status}")
+        print(f"   - Status changed: {new_detection_status != old_detection_status}")
+        
+        if new_detection_status != old_detection_status:
+            print(f"🔄 Camera {camera_id} person detection status changed: {old_detection_status} -> {new_detection_status}")
+            
+            try:
+                # Check if camera is streaming and has frames
+                status_check = await client.get(
+                    f"{VIDEO_PIPELINE_URL}/api/v1/video-pipeline/decode/status/",
+                    params={"camera_id": str(camera_id)},
+                    timeout=10.0
+                )
+                
+                if status_check.status_code == 200:
+                    status_data = status_check.json()
+                    is_streaming = status_data.get("status") == "running" and status_data.get("frame_count", 0) > 0
+                    
+                    if new_detection_status and is_streaming:
+                        # Start AI inference for person detection
+                        print(f"🤖 Starting person detection for camera {camera_id}")
+                        async with httpx.AsyncClient() as ai_client:
+                            await start_ai_inference_for_camera(camera_id, ai_client)
+                    elif not new_detection_status:
+                        # Stop AI inference (if there's a stop endpoint)
+                        print(f"🛑 Stopping person detection for camera {camera_id}")
+                        ai_service_url = os.getenv("AI_SERVICE_URL", "http://ai_inference:8001")
+                        try:
+                            stop_response = await client.post(
+                                f"{ai_service_url}/inference/continuous/stop",
+                                params={"camera_id": str(camera_id)},
+                                timeout=10.0
+                            )
+                            if stop_response.status_code == 200:
+                                print(f"✅ Person detection stopped for camera {camera_id}")
+                        except Exception as e:
+                            print(f"⚠️ Error stopping person detection: {str(e)}")
+            except Exception as e:
+                print(f"❌ Error managing person detection for camera {camera_id}: {str(e)}")
     
     # NOW update the camera in the database
     db_camera = camera_crud.update_camera(db, camera_id=camera_id, camera_update=camera_update)
@@ -675,6 +774,12 @@ async def activate_camera(
                 status_result = status_response.json()
                 if status_result.get("status") == "running" and status_result.get("frame_count", 0) > 0:
                     response["activation"]["status"] = "activated"
+                    
+                    # Start AI inference for person detection if enabled
+                    db_camera = camera_crud.get_camera(db, camera_id=camera_id)
+                    if db_camera and db_camera.person_detection_enabled:
+                        async with httpx.AsyncClient() as ai_client:
+                            await start_ai_inference_for_camera(camera_id, ai_client)
                     # Set streaming status to streaming when successful
                     update_camera_status(camera_id, streaming_status="streaming")
                     print(f"✅ Camera {camera_id} activated successfully")
@@ -808,14 +913,40 @@ async def get_decode_status(
 async def get_latest_frame(
     camera_id: int,
     use_tracking: bool = Query(False, description="Use vehicle tracking if enabled"),
+    use_ai_annotated: bool = Query(False, description="Use AI annotated frame (person detection)"),
     client: httpx.AsyncClient = Depends(get_video_pipeline_client),
     db: Session = Depends(get_db)
 ):
     """
     Get the latest decoded frame for a camera
+    If use_ai_annotated=True, return AI annotated frame with person detection
     If vehicle tracking is enabled and use_tracking=True, return annotated frame
     """
     try:
+        # If AI annotated frame is requested, get it from AI inference service
+        if use_ai_annotated:
+            try:
+                async with httpx.AsyncClient() as ai_client:
+                    ai_response = await ai_client.get(
+                        f"{AI_SERVICE_URL}/shared/cameras/{camera_id}/frames/latest/annotated",
+                        timeout=10.0
+                    )
+                    if ai_response.status_code == 200:
+                        return StreamingResponse(
+                            BytesIO(ai_response.content),
+                            media_type="image/jpeg",
+                            headers={
+                                "Content-Disposition": f"inline; filename=annotated_frame_{camera_id}.jpg",
+                                "X-AI-Annotated": "true"
+                            }
+                        )
+                    else:
+                        # Fallback to raw frame if annotated frame not available
+                        logger.warning(f"AI annotated frame not available for camera {camera_id}, falling back to raw frame")
+            except Exception as e:
+                logger.error(f"Error getting AI annotated frame: {e}")
+                # Fallback to raw frame
+        
         # Check if vehicle tracking is enabled and requested
         db_camera = camera_crud.get_camera(db, camera_id=camera_id)
         should_use_tracking = use_tracking and db_camera and db_camera.vehicle_tracking_enabled

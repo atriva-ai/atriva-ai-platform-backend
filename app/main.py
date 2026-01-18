@@ -23,8 +23,8 @@ if os.getenv("ENV", "production") != "production":
     
     # Run migrations to add missing columns
     try:
-        from app.db.migrations.add_vehicle_tracking import upgrade
-        upgrade()
+        from app.db.migrations.add_vehicle_tracking import upgrade as upgrade_vehicle_tracking
+        upgrade_vehicle_tracking()
     except Exception as e:
         # Check if error is because column already exists (which is fine)
         error_str = str(e).lower()
@@ -32,6 +32,18 @@ if os.getenv("ENV", "production") != "production":
             print("✅ Vehicle tracking columns already exist, skipping migration")
         else:
             print(f"⚠️ Migration warning: {str(e)}")
+    
+    # Run migration for person detection
+    try:
+        from app.db.migrations.add_person_detection import upgrade as upgrade_person_detection
+        upgrade_person_detection()
+    except Exception as e:
+        # Check if error is because column already exists (which is fine)
+        error_str = str(e).lower()
+        if "already exists" in error_str or "duplicate column" in error_str:
+            print("✅ Person detection column already exists, skipping migration")
+        else:
+            print(f"⚠️ Person detection migration warning: {str(e)}")
     
     # Seed the database with initial data
     from app.init_db import seed

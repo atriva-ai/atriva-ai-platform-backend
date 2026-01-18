@@ -12,6 +12,8 @@ class CameraBase(BaseModel):
     # Vehicle tracking configuration
     vehicle_tracking_enabled: bool = False
     vehicle_tracking_config: Optional[Dict[str, Any]] = None
+    # Person detection (AI) configuration
+    person_detection_enabled: bool = True
 
 class CameraCreate(CameraBase):
     pass
@@ -25,6 +27,8 @@ class CameraUpdate(BaseModel):
     # Vehicle tracking configuration
     vehicle_tracking_enabled: Optional[bool] = None
     vehicle_tracking_config: Optional[Dict[str, Any]] = None
+    # Person detection (AI) configuration
+    person_detection_enabled: Optional[bool] = None
 
 class CameraInDB(CameraBase):
     id: int
