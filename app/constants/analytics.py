@@ -13,6 +13,7 @@ class AnalyticsType(str, Enum):
     DWELL_TIME_BY_ZONE = "dwell_time_by_zone"
     LINE_CROSS_COUNT = "line_cross_count"
     DEMOGRAPHIC_ON_LINE_CROSSING = "demographic_on_line_crossing"
+    ENTRANCE = "entrance"
 
 class AnalyticsConfig:
     """Predefined analytics configurations"""
@@ -134,6 +135,25 @@ class AnalyticsConfig:
         "requires_zone": False,
         "requires_line": True
     }
+    
+    ENTRANCE = {
+        "name": "Entrance / Exit Analytics",
+        "type": AnalyticsType.ENTRANCE,
+        "description": "Track people entering and exiting through a virtual line",
+        "default_config": {
+            "enabled": False,
+            "line": {
+                "x1": 0.0,
+                "y1": 0.0,
+                "x2": 0.0,
+                "y2": 0.0
+            },
+            "direction": "both",  # "in", "out", "both"
+            "debounce_interval": 3.0  # seconds
+        },
+        "requires_zone": False,
+        "requires_line": True
+    }
 
 def get_analytics_config(analytics_type: AnalyticsType) -> Dict[str, Any]:
     """Get configuration for a specific analytics type"""
@@ -145,6 +165,7 @@ def get_analytics_config(analytics_type: AnalyticsType) -> Dict[str, Any]:
         AnalyticsType.DWELL_TIME_BY_ZONE: AnalyticsConfig.DWELL_TIME_BY_ZONE,
         AnalyticsType.LINE_CROSS_COUNT: AnalyticsConfig.LINE_CROSS_COUNT,
         AnalyticsType.DEMOGRAPHIC_ON_LINE_CROSSING: AnalyticsConfig.DEMOGRAPHIC_ON_LINE_CROSSING,
+        AnalyticsType.ENTRANCE: AnalyticsConfig.ENTRANCE,
     }
     return configs.get(analytics_type, {})
 
@@ -158,4 +179,5 @@ def get_all_analytics_configs() -> Dict[str, Dict[str, Any]]:
         AnalyticsType.DWELL_TIME_BY_ZONE: AnalyticsConfig.DWELL_TIME_BY_ZONE,
         AnalyticsType.LINE_CROSS_COUNT: AnalyticsConfig.LINE_CROSS_COUNT,
         AnalyticsType.DEMOGRAPHIC_ON_LINE_CROSSING: AnalyticsConfig.DEMOGRAPHIC_ON_LINE_CROSSING,
+        AnalyticsType.ENTRANCE: AnalyticsConfig.ENTRANCE,
     } 

@@ -10,6 +10,7 @@ from ..database import get_db
 from ..db.models.camera import Camera as CameraModel
 from ..db.schemas.camera import CameraCreate, CameraUpdate, CameraInDB
 from ..db.crud import camera as camera_crud
+from ..db.crud import entry_exit_event as entry_exit_event_crud
 from io import BytesIO
 
 # Configure logging
@@ -141,22 +142,9 @@ async def initialize_cameras_on_startup(db: Session, client: httpx.AsyncClient):
                 except Exception as e:
                     print(f"❌ Error re-activating camera {camera.id}: {str(e)}")
             
-            # Re-start vehicle tracking if enabled
-            if camera.vehicle_tracking_enabled:
-                try:
-                    print(f"🔄 Re-starting vehicle tracking for camera {camera.id} using inference endpoint")
-                    ai_service_url = os.getenv("AI_SERVICE_URL", "http://ai_inference:8001")
-                    tracking_response = await client.post(
-                        f"{ai_service_url}/vehicle-tracking/start/",
-                        json={"camera_id": str(camera.id)},
-                        timeout=10.0
-                    )
-                    if tracking_response.status_code == 200:
-                        print(f"✅ Vehicle tracking re-started for camera {camera.id}")
-                    else:
-                        print(f"❌ Failed to re-start vehicle tracking for camera {camera.id}: {tracking_response.status_code}")
-                except Exception as e:
-                    print(f"❌ Error re-starting vehicle tracking for camera {camera.id}: {str(e)}")
+            # Note: Vehicle tracking is NOT automatically re-started on backend startup
+            # It must be explicitly started via the /camera/{camera_id}/vehicle-tracking/start/ endpoint
+            # This allows the app to control when vehicle tracking should be active
         
         _startup_initialized = True
         print("✅ Camera startup initialization completed")
@@ -251,29 +239,9 @@ async def create_camera(
     else:
         print(f"⏸️ Camera {db_camera.id} created but not auto-started (is_active={db_camera.is_active}, has_rtsp={bool(camera.rtsp_url)})")
     
-    # Start vehicle tracking if enabled (use database value)
-    print(f"🔍 VEHICLE TRACKING CHECK: db_camera.vehicle_tracking_enabled = {db_camera.vehicle_tracking_enabled}")
-    print(f"🔍 VEHICLE TRACKING CHECK: type = {type(db_camera.vehicle_tracking_enabled)}")
-    if db_camera.vehicle_tracking_enabled:
-        try:
-            print(f"🚗 Starting vehicle tracking for camera {db_camera.id}")
-            ai_service_url = os.getenv("AI_SERVICE_URL", "http://ai_inference:8001")
-            tracking_response = await client.post(
-                f"{ai_service_url}/vehicle-tracking/start/",
-                json={"camera_id": str(db_camera.id)},
-                timeout=10.0
-            )
-            if tracking_response.status_code == 200:
-                print(f"✅ Vehicle tracking started for camera {db_camera.id}")
-                response["video_validation"]["vehicle_tracking_started"] = True
-            else:
-                print(f"❌ Failed to start vehicle tracking for camera {db_camera.id}: {tracking_response.status_code}")
-                response["video_validation"]["errors"].append(f"Failed to start vehicle tracking: {tracking_response.status_code}")
-        except Exception as e:
-            print(f"❌ Error starting vehicle tracking for camera {db_camera.id}: {str(e)}")
-            response["video_validation"]["errors"].append(f"Vehicle tracking start error: {str(e)}")
-    else:
-        print(f"⏸️ Vehicle tracking NOT started for camera {db_camera.id} (vehicle_tracking_enabled=False)")
+    # Note: Vehicle tracking is NOT automatically started on camera creation
+    # It must be explicitly started via the /camera/{camera_id}/vehicle-tracking/start/ endpoint
+    # This allows the app to control when vehicle tracking should be active
     
     # Get video information if RTSP URL is provided
     if camera.rtsp_url:
@@ -457,51 +425,12 @@ async def update_camera(
             # Update runtime status
             update_camera_status(camera_id, is_active=new_active_status)
     
-    # Handle vehicle tracking enable/disable BEFORE updating the database
-    print(f"🔍 Update data for camera {camera_id}: {update_data}")
-    print(f"🔍 vehicle_tracking_enabled in update_data: {'vehicle_tracking_enabled' in update_data}")
-    
-    if 'vehicle_tracking_enabled' in update_data:
-        new_tracking_status = update_data['vehicle_tracking_enabled']
-        old_tracking_status = current_camera.vehicle_tracking_enabled  # Read OLD status BEFORE update
-        
-        print(f"🔍 Vehicle tracking update check for camera {camera_id}:")
-        print(f"   - Old status: {old_tracking_status}")
-        print(f"   - New status: {new_tracking_status}")
-        print(f"   - Status changed: {new_tracking_status != old_tracking_status}")
-        
-        if new_tracking_status != old_tracking_status:
-            print(f"🔄 Camera {camera_id} vehicle tracking status changed: {old_tracking_status} -> {new_tracking_status}")
-            
-            try:
-                # Call AI service to start/stop vehicle tracking
-                ai_service_url = os.getenv("AI_SERVICE_URL", "http://ai_inference:8001")
-                
-                if new_tracking_status:
-                    # Start vehicle tracking - use existing inference endpoint
-                    print(f"🚗 Starting vehicle tracking for camera {camera_id} using inference endpoint")
-                    tracking_response = await client.post(
-                        f"{ai_service_url}/vehicle-tracking/start/",
-                        json={"camera_id": str(camera_id)},
-                        timeout=10.0
-                    )
-                    if tracking_response.status_code == 200:
-                        print(f"✅ Vehicle tracking started for camera {camera_id}")
-                    else:
-                        print(f"❌ Failed to start vehicle tracking for camera {camera_id}: {tracking_response.status_code}")
-                else:
-                    # Stop vehicle tracking
-                    tracking_response = await client.post(
-                        f"{ai_service_url}/vehicle-tracking/stop/",
-                        json={"camera_id": str(camera_id)},
-                        timeout=10.0
-                    )
-                    if tracking_response.status_code == 200:
-                        print(f"✅ Vehicle tracking stopped for camera {camera_id}")
-                    else:
-                        print(f"❌ Failed to stop vehicle tracking for camera {camera_id}: {tracking_response.status_code}")
-            except Exception as e:
-                print(f"❌ Error managing vehicle tracking for camera {camera_id}: {str(e)}")
+    # Note: Vehicle tracking is NOT automatically started/stopped when the flag is updated
+    # The vehicle_tracking_enabled flag is just a database field that indicates if tracking is configured
+    # Actual start/stop must be done via explicit API calls:
+    # - POST /api/v1/cameras/{camera_id}/vehicle-tracking/start/
+    # - POST /api/v1/cameras/{camera_id}/vehicle-tracking/stop/
+    # This allows the app to control when vehicle tracking should be active
     
     # Handle person detection enable/disable BEFORE updating the database
     if 'person_detection_enabled' in update_data:
@@ -581,9 +510,10 @@ async def delete_camera(
     except Exception as e:
         print(f"⚠️ Error stopping video decode for camera {camera_id}: {str(e)}")
     
-    # Stop vehicle tracking if it's running
+    # Clean up vehicle tracking if it's running (cleanup only, not automatic management)
+    # This is just cleanup on deletion, not automatic tracking management
     try:
-        print(f"🛑 Stopping vehicle tracking for camera {camera_id} before deletion")
+        print(f"🛑 Stopping vehicle tracking for camera {camera_id} before deletion (cleanup)")
         ai_service_url = os.getenv("AI_SERVICE_URL", "http://ai_inference:8001")
         tracking_response = await client.post(
             f"{ai_service_url}/vehicle-tracking/stop/",
@@ -593,9 +523,30 @@ async def delete_camera(
         if tracking_response.status_code == 200:
             print(f"✅ Vehicle tracking stopped for camera {camera_id}")
         else:
-            print(f"⚠️ Failed to stop vehicle tracking for camera {camera_id}: {tracking_response.status_code}")
+            # Not an error - tracking might not have been running
+            print(f"⚠️ Vehicle tracking stop returned {tracking_response.status_code} for camera {camera_id} (may not have been running)")
     except Exception as e:
-        print(f"⚠️ Error stopping vehicle tracking for camera {camera_id}: {str(e)}")
+        # Not a critical error - just log and continue with deletion
+        print(f"⚠️ Could not stop vehicle tracking for camera {camera_id} during cleanup: {str(e)}")
+    
+    # Stop entrance/exit polling if running
+    try:
+        # Import here to avoid potential circular import issues
+        from app.routes.entrance_exit import stop_entrance_polling
+        stop_entrance_polling(camera_id)
+        print(f"✅ Entrance/exit polling stopped for camera {camera_id}")
+    except Exception as e:
+        # Not a critical error - just log and continue
+        print(f"⚠️ Could not stop entrance/exit polling for camera {camera_id} during cleanup: {str(e)}")
+    
+    # Clean up entry/exit events before deleting camera (to avoid foreign key constraint violation)
+    try:
+        deleted_count = entry_exit_event_crud.delete_entry_exit_events_by_camera(db, camera_id)
+        if deleted_count > 0:
+            print(f"✅ Deleted {deleted_count} entry/exit events for camera {camera_id}")
+    except Exception as e:
+        # Log error but continue - we'll try to delete camera anyway
+        print(f"⚠️ Could not delete entry/exit events for camera {camera_id}: {str(e)}")
     
     # Now delete the camera from database
     success = camera_crud.delete_camera(db, camera_id=camera_id)

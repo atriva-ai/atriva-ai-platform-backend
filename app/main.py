@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routes import store, settings, camera, zone, analytics, video_pipeline, ai_inference, alert_engine, license_plate_detection
+from app.routes import store, settings, camera, zone, analytics, video_pipeline, ai_inference, alert_engine, license_plate_detection, entrance_exit
 from app.database import engine, Base, get_db
 import time
 import psycopg2
@@ -11,7 +11,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 # Import all models to ensure they are registered with SQLAlchemy
-from app.db.models import Store, Settings, Camera, Zone, Analytics, AlertEngine, LicensePlateDetection
+from app.db.models import Store, Settings, Camera, Zone, Analytics, AlertEngine, LicensePlateDetection, EntryExitEvent
 
 # Step 1: Initialize DB models/tables
 # Only create tables automatically in dev, not production
@@ -59,7 +59,26 @@ app = FastAPI(
 )
 
 # Configure logging to show API requests
-logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+# Filter out frequent polling endpoints to reduce log noise
+class AccessLogFilter(logging.Filter):
+    def filter(self, record):
+        # Exclude frequently polled GET endpoints from access logs
+        # Uvicorn access logs format: "INFO: ... - \"GET /api/v1/... HTTP/1.1\" 200 OK"
+        log_message = record.getMessage() if hasattr(record, 'getMessage') else str(record.msg)
+        if "GET" in log_message:
+            # Exclude GET /api/v1/cameras/ (frequently polled)
+            if "/api/v1/cameras/ HTTP" in log_message:
+                return False
+            # Exclude GET /api/v1/alert-engines/camera/ (frequently polled)
+            if "/api/v1/alert-engines/camera/" in log_message:
+                return False
+        return True
+
+# Apply filter to uvicorn access logger
+uvicorn_access_logger = logging.getLogger("uvicorn.access")
+uvicorn_access_logger.addFilter(AccessLogFilter())
+uvicorn_access_logger.setLevel(logging.INFO)
+
 logging.getLogger("fastapi").setLevel(logging.INFO)
 
 # CORS configuration
@@ -136,6 +155,11 @@ try:
     app.include_router(license_plate_detection.router)
 except Exception as e:
     print("Failed to load license plate detection routes:", e)
+
+try:
+    app.include_router(entrance_exit.router)
+except Exception as e:
+    print("Failed to load entrance/exit routes:", e)
 
 # @app.get("/")
 # def health():
