@@ -6,7 +6,7 @@ API endpoints for configuring and querying entrance/exit analytics.
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, date
 from app.database import get_db
 from app.db.crud import analytics as analytics_crud
 from app.db.crud import entry_exit_event as event_crud
@@ -471,5 +471,50 @@ def get_entrance_tracking_status(camera_id: int, db: Session = Depends(get_db)):
         "enabled": config.get("enabled", False) if config else False,
         "has_line": bool(config.get("line", {}).get("x1")) if config else False,
         "line_config": config.get("line", {}) if config else {}
+    }
+
+
+@router.get("/counts")
+def get_entrance_exit_counts(
+    target_date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format (defaults to today)"),
+    camera_id: Optional[int] = Query(None, description="Filter by camera ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get aggregated entrance/exit counts by camera for a specific date.
+    
+    Returns counts grouped by camera with enter_count, exit_count, and total_count.
+    """
+    # Parse target_date if provided
+    parsed_date = None
+    if target_date:
+        try:
+            parsed_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid date format. Use YYYY-MM-DD"
+            )
+    
+    # Get counts from database
+    counts = event_crud.get_entry_exit_counts_by_camera(
+        db=db,
+        target_date=parsed_date,
+        camera_id=camera_id
+    )
+    
+    # Enrich with camera names
+    result = []
+    for count_data in counts:
+        camera = camera_crud.get_camera(db, count_data['camera_id'])
+        result.append({
+            **count_data,
+            'camera_name': camera.name if camera else f"Camera {count_data['camera_id']}",
+            'camera_location': camera.location if camera else None
+        })
+    
+    return {
+        "date": (parsed_date or datetime.utcnow().date()).isoformat(),
+        "counts": result
     }
 
