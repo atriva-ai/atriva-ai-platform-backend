@@ -82,30 +82,47 @@ uvicorn_access_logger.setLevel(logging.INFO)
 logging.getLogger("fastapi").setLevel(logging.INFO)
 
 # CORS configuration
-origins = [
-    # Frontend origins
-    "http://localhost:3000",     # Next.js development server
-    "http://127.0.0.1:3000",    # Next.js development server alternative
-    "http://frontend:3000",      # Docker service name
-    
-    # Nginx proxy origins (for requests coming through nginx)
-    "http://localhost",          # nginx proxy
-    "http://localhost:80",       # nginx proxy explicit port
-    "http://127.0.0.1",         # nginx proxy alternative
-    "http://127.0.0.1:80",      # nginx proxy explicit port
-]
+# Always allow all origins in development to support network IP access
+# This makes it easier to access the frontend from other devices on the network (e.g., Mac, mobile)
+# Check multiple ways to detect development mode
+is_development = (
+    os.getenv("ENV", "").lower() in ["development", "dev", ""] or
+    os.getenv("NODE_ENV", "").lower() == "development" or
+    not os.getenv("ENV")  # Default to development if ENV is not set
+)
 
-# Add production origins if in production
-if os.getenv("ENV") == "production":
+if is_development:
+    # In development: Allow all origins to support network IP access
+    # This is safe in development and makes testing from other devices easy
+    print("🔓 CORS: Development mode - allowing all origins (network IP access enabled)")
+    origins = ["*"]
+    allow_credentials = False  # Can't use credentials with wildcard origins
+else:
+    # Production: Only allow specific origins
+    print("🔒 CORS: Production mode - using restricted origins")
+    origins = [
+        # Frontend origins
+        "http://localhost:3000",     # Next.js development server
+        "http://127.0.0.1:3000",    # Next.js development server alternative
+        "http://frontend:3000",      # Docker service name
+        
+        # Nginx proxy origins (for requests coming through nginx)
+        "http://localhost",          # nginx proxy
+        "http://localhost:80",       # nginx proxy explicit port
+        "http://127.0.0.1",         # nginx proxy alternative
+        "http://127.0.0.1:80",      # nginx proxy explicit port
+    ]
+    # Add production origins if in production
     origins.extend([
         # Add your production frontend URLs here
         # "https://your-production-domain.com",
     ])
+    allow_credentials = True
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
+    allow_credentials=allow_credentials,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
