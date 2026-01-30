@@ -45,6 +45,18 @@ if os.getenv("ENV", "production") != "production":
         else:
             print(f"⚠️ Person detection migration warning: {str(e)}")
     
+    # Run migration for AI inference settings
+    try:
+        from app.db.migrations.add_ai_inference_settings import upgrade as upgrade_ai_inference_settings
+        upgrade_ai_inference_settings()
+    except Exception as e:
+        # Check if error is because column already exists (which is fine)
+        error_str = str(e).lower()
+        if "already exists" in error_str or "duplicate column" in error_str:
+            print("✅ AI inference settings columns already exist, skipping migration")
+        else:
+            print(f"⚠️ AI inference settings migration warning: {str(e)}")
+    
     # Seed the database with initial data
     from app.init_db import seed
     seed()

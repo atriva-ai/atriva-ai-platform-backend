@@ -10,6 +10,9 @@ class SettingsBase(BaseModel):
     store_theme: str = "light"
     store_notifications_enabled: bool = True
     store_analytics_enabled: bool = True
+    # AI Inference settings
+    ai_inference_fps: float = 5.0  # Default: 5 FPS
+    person_detection_enabled_by_default: bool = True  # Person detection enabled by default
 
 class SettingsCreate(SettingsBase):
     pass
@@ -22,6 +25,9 @@ class SettingsUpdate(BaseModel):
     store_theme: Optional[str] = None
     store_notifications_enabled: Optional[bool] = None
     store_analytics_enabled: Optional[bool] = None
+    # AI Inference settings
+    ai_inference_fps: Optional[float] = None
+    person_detection_enabled_by_default: Optional[bool] = None
 
 class SettingsResponse(SettingsBase):
     id: int

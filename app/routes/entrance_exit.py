@@ -346,6 +346,13 @@ def update_entrance_config(
                 timeout=2.0
             )
             if not (inference_check.ok and inference_check.json().get("running", False)):
+                # Get FPS from settings
+                from app.db.models.settings import Settings
+                settings = db.query(Settings).first()
+                inference_fps = 5.0  # Default
+                if settings and hasattr(settings, 'ai_inference_fps'):
+                    inference_fps = settings.ai_inference_fps
+                
                 # Start inference with person tracking
                 inference_start = requests.post(
                     f"{AI_INFERENCE_URL}/inference/continuous/start",
@@ -353,7 +360,8 @@ def update_entrance_config(
                         "camera_id": str(camera_id),
                         "model_name": "yolov8n",
                         "accelerator": "cpu32",
-                        "object_filter": "person"
+                        "object_filter": "person",
+                        "inference_fps": inference_fps
                     },
                     timeout=5.0
                 )

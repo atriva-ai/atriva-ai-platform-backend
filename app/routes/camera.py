@@ -41,22 +41,42 @@ async def get_ai_inference_client():
     async with httpx.AsyncClient() as client:
         yield client
 
-async def start_ai_inference_for_camera(camera_id: int, ai_client: httpx.AsyncClient):
-    """Start continuous AI inference (person detection) for a camera."""
+async def start_ai_inference_for_camera(camera_id: int, ai_client: httpx.AsyncClient, db: Session = None, inference_fps: Optional[float] = None):
+    """Start continuous AI inference (person detection) for a camera.
+    
+    Args:
+        camera_id: Camera ID to start inference for
+        ai_client: HTTP client for AI inference service
+        db: Database session (optional, used to get FPS from settings)
+        inference_fps: Override FPS (optional, if not provided will get from settings)
+    """
     try:
-        print(f"🤖 Starting AI inference for camera {camera_id}")
+        # Get FPS from settings if not provided
+        if inference_fps is None:
+            if db is not None:
+                from app.db.models.settings import Settings
+                settings = db.query(Settings).first()
+                if settings and hasattr(settings, 'ai_inference_fps'):
+                    inference_fps = settings.ai_inference_fps
+                else:
+                    inference_fps = 5.0  # Default fallback
+            else:
+                inference_fps = 5.0  # Default fallback
+        
+        print(f"🤖 Starting AI inference for camera {camera_id} at {inference_fps} FPS")
         inference_response = await ai_client.post(
             f"{AI_SERVICE_URL}/inference/continuous/start",
             params={
                 "camera_id": str(camera_id),
                 "model_name": "yolov8n",
                 "accelerator": "cpu32",
-                "object_filter": "person"
+                "object_filter": "person",
+                "inference_fps": inference_fps
             },
             timeout=30.0
         )
         if inference_response.status_code == 200:
-            print(f"✅ AI inference started for camera {camera_id}")
+            print(f"✅ AI inference started for camera {camera_id} at {inference_fps} FPS")
             return True
         else:
             print(f"⚠️ Failed to start AI inference for camera {camera_id}: {inference_response.status_code}")
@@ -229,7 +249,7 @@ async def create_camera(
                 # Start AI inference for person detection if enabled
                 if db_camera.person_detection_enabled:
                     async with httpx.AsyncClient() as ai_client:
-                        await start_ai_inference_for_camera(db_camera.id, ai_client)
+                        await start_ai_inference_for_camera(db_camera.id, ai_client, db=db)
             else:
                 print(f"❌ Failed to auto-start camera {db_camera.id}: {decode_response.status_code}")
                 response["video_validation"]["errors"].append(f"Failed to auto-start camera: {decode_response.status_code}")
@@ -259,15 +279,18 @@ async def create_camera(
                 )
                 print(f"Video info response: {video_info_response}")
                 if video_info_response.status_code == 200:
-                    video_info = video_info_response.json()
-                    response["video_validation"]["video_info"] = video_info
+                    video_info_response_data = video_info_response.json()
+                    # Extract the actual info object from the response
+                    # Response format: {"message": "...", "info": {...}}
+                    video_info = video_info_response_data.get("info", video_info_response_data)
+                    response["video_validation"]["video_info"] = {"info": video_info}
                     response["video_validation"]["status"] = "validated"
                     
-                    # Save video info to database
+                    # Save video info to database (save the full structure with "info" key for consistency)
                     camera_crud.update_camera(
                         db=db, 
                         camera_id=db_camera.id, 
-                        camera_update=CameraUpdate(video_info=video_info)
+                        camera_update=CameraUpdate(video_info={"info": video_info})
                     )
                     
                     print(f"✅ Video info retrieved and saved for camera {db_camera.id}")
@@ -386,7 +409,7 @@ async def update_camera(
                                     # Frames are available, start AI inference if enabled
                                     if current_camera.person_detection_enabled:
                                         async with httpx.AsyncClient() as ai_client:
-                                            await start_ai_inference_for_camera(camera_id, ai_client)
+                                            await start_ai_inference_for_camera(camera_id, ai_client, db=db)
                         else:
                             print(f"❌ FAILED: Start decode for camera {camera_id}: {decode_response.status_code}")
                             print(f"❌ FAILED RESPONSE: {decode_response.text}")
@@ -461,7 +484,7 @@ async def update_camera(
                         # Start AI inference for person detection
                         print(f"🤖 Starting person detection for camera {camera_id}")
                         async with httpx.AsyncClient() as ai_client:
-                            await start_ai_inference_for_camera(camera_id, ai_client)
+                            await start_ai_inference_for_camera(camera_id, ai_client, db=db)
                     elif not new_detection_status:
                         # Stop AI inference (if there's a stop endpoint)
                         print(f"🛑 Stopping person detection for camera {camera_id}")
@@ -601,12 +624,21 @@ async def validate_camera_video(
                 
                 if video_info_response.status_code == 200:
                     video_info_result = video_info_response.json()
-                    if video_info_result.get("info", {}).get("codec"):
+                    # Extract the actual info object from the response
+                    video_info = video_info_result.get("info", video_info_result)
+                    if video_info.get("codec") and video_info.get("codec") != "unknown":
                         # Video info acquired successfully - set is_active to true
                         update_camera_status(camera_id, is_active=True, streaming_status="stopped")
-                        response["validation"]["video_info"] = video_info_result["info"]
+                        response["validation"]["video_info"] = video_info
                         response["validation"]["status"] = "video_info_acquired"
-                        print(f"✅ Video info acquired for camera {camera_id}")
+                        
+                        # Save video info to database (save in consistent format with "info" key)
+                        camera_crud.update_camera(
+                            db=db,
+                            camera_id=camera_id,
+                            camera_update=CameraUpdate(video_info={"info": video_info})
+                        )
+                        print(f"✅ Video info acquired and saved for camera {camera_id}")
                     else:
                         response["validation"]["errors"].append("Invalid video stream - no codec found")
                         print(f"❌ Invalid video stream for camera {camera_id}")
@@ -730,7 +762,7 @@ async def activate_camera(
                     db_camera = camera_crud.get_camera(db, camera_id=camera_id)
                     if db_camera and db_camera.person_detection_enabled:
                         async with httpx.AsyncClient() as ai_client:
-                            await start_ai_inference_for_camera(camera_id, ai_client)
+                            await start_ai_inference_for_camera(camera_id, ai_client, db=db)
                     # Set streaming status to streaming when successful
                     update_camera_status(camera_id, streaming_status="streaming")
                     print(f"✅ Camera {camera_id} activated successfully")

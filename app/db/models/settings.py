@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -13,6 +13,9 @@ class Settings(Base):
     store_theme = Column(String, default="light")
     store_notifications_enabled = Column(Boolean, default=True)
     store_analytics_enabled = Column(Boolean, default=True)
+    # AI Inference settings
+    ai_inference_fps = Column(Float, default=5.0)  # Default: 5 FPS
+    person_detection_enabled_by_default = Column(Boolean, default=True)  # Person detection enabled by default
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
